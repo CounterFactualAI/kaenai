@@ -3,10 +3,10 @@ import setuptools
 
 setuptools.setup(
     name="kaen",
-    version="1.0.1",
+    version="1.0.1.4",
     author="CounterFactual.AI LLC",
     author_email="kaen@counterfactual.ai",
-    description="Kaen, a framework for deep learning",
+    description="kaen is an open source toolkit to help you train and deploy deep learning models in public clouds",
     url="https://github.com/CounterFactualAI/kaenai",
     license="GPL v3.0",
     install_requires=[
@@ -14,9 +14,25 @@ setuptools.setup(
       'fsspec',
       'pandas',
       's3fs',
-      'gcsfs'
+      'gcsfs',
+'click', 
+			'python-dotenv', 
+			'docker', 
+			'mlflow',
     ],
-    packages=setuptools.find_packages()
+		extras_require={
+			"optuna":  ["optuna", "sklearn", "plotly", "kaleido"],			
+    },
+    include_package_data=True,
+		py_modules=['kaen.main'],
+    
+    # package_dir = {'': 'src/py'},
+    packages=setuptools.find_packages(
+      # where = 'src/py',
+      exclude=["src/py/test", "test", "**/.DS_Store"],
+    ),
+    # data_files=[('src/py/setup.py')],    
+    python_requires=">=3.6",
 )
 # Copyright 2021 CounterFactual.AI LLC. All Rights Reserved.
 #
