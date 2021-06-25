@@ -18,6 +18,7 @@ elif [ $1 == "env/test" ] ; then
 	pip install pytest
 	pip uninstall $( ls -t dist/*.tar.gz | head -n 1 )
 	pip install $( ls -t dist/*.tar.gz | head -n 1 )
+	pip install kaen[all]
 
 	deactivate
 	exit 0

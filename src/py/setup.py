@@ -1,27 +1,36 @@
 # Licensed under the GNU General Public License v3.0. See footer for details.
 import setuptools
 
+
+require_optuna = ["optuna", "sklearn", "plotly", "kaleido"]
+require_osds = ['fsspec', 'pandas', 's3fs']
+require_spark = ["numpy", "pandas", "scipy", "pyspark"]
+
+all = require_optuna + require_osds + require_spark
+
 setuptools.setup(
     name="kaen",
-    version="1.0.1.4",
+    version="1.0.1.7",
     author="CounterFactual.AI LLC",
     author_email="kaen@counterfactual.ai",
-    description="kaen is an open source toolkit to help you train and deploy deep learning models in public clouds",
+    description="kaen is a friendly open source toolkit to help you train and deploy deep learning models in public clouds",
     url="https://github.com/CounterFactualAI/kaenai",
     license="GPL v3.0",
     install_requires=[
       'torch',
-      'fsspec',
-      'pandas',
-      's3fs',
-      'gcsfs',
-'click', 
-			'python-dotenv', 
-			'docker', 
-			'mlflow',
+      # 'gcsfs',
+      # 'click', 
+			# 'python-dotenv', 
+			# 'docker', 
+			# 'mlflow',
     ],
 		extras_require={
-			"optuna":  ["optuna", "sklearn", "plotly", "kaleido"],			
+			"optuna":  require_optuna,			
+      "osds": require_osds,
+      "spark": require_spark,
+      "latest": [""],
+      "stable": [""],
+      "all": all,
     },
     include_package_data=True,
 		py_modules=['kaen.main'],
