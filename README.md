@@ -5,8 +5,9 @@
 Kaen simplifies
 
 - setup of PyTorch distributed training environments in AWS, Azure, and GCP
+- lifecycle of cloud-based PySpark jobs for data prep and feature engineering
+- integration of hyperparameter tuning in machine learning pipelines
 - deployment of trained PyTorch models as microservices
-- lifecycle of PySpark jobs for data prep, clean up, and feature engineering 
 
 #### Fun Facts
 
