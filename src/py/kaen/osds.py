@@ -131,7 +131,13 @@ class BaseObjectStorageDataset():
 
         # use anonymous connection unless specified otherwise
         storage_options = storage_options if storage_options else {'anon': True}
-
+        # handle the edge case when the user passes the boolean as a non boolean, e.g. str
+        if 'anon' in storage_options:
+            if type(storage_options['anon']) is str:
+                storage_options['anon'] = True if str(storage_options['anon']).lower() == 'true' else False
+            else:
+                storage_options['anon'] = bool(storage_options['anon'])
+        
         if protocol in ('http', 'https'):
             # setup a caching filesystem
             self.fs = fsspec.filesystem("filecache",
