@@ -7,11 +7,11 @@ import pandas as pd
 def make_metadata_df(glob = None, df = None, header = None):    
     assert glob is not None or df is not None, "Either glob or df must be specified"
     df = pd.read_csv(f"filecache::{glob}", header) if glob else df
-    assert set(df.columns) == set(['_partitionId', 'count']), "The metadata source must include _partitionId and count columns"
-    df = df.sort_values(by='_partitionId', ignore_index=True)
+    assert set(df.columns) == set(['id', 'count']), "The metadata source must include id and count columns"
+    df = df.sort_values(by='id', ignore_index=True)
     df['end_idx'] = df['count'].cumsum()
     df['start_idx'] = df['end_idx'] - df['count']
-    df = df[['_partitionId', 'start_idx', 'end_idx']]
+    df = df[['id', 'start_idx', 'end_idx']]
     return df
 
 def objs_to_metadata_df(objs, header = None):
@@ -21,9 +21,9 @@ def objs_to_metadata_df(objs, header = None):
         for idx, obj in enumerate(objs):
             try:
                 df = pd.read_csv(f"filecache::{obj}", header = header)
-                rows.append({"_partitionId": idx, "count": len(df),})
+                rows.append({"id": idx, "count": len(df),})
             except pd.errors.EmptyDataError:                
-                rows.append({"_partitionId": idx, "count": 0,})
+                rows.append({"id": idx, "count": 0,})
     return pd.DataFrame(rows)
 
 def df_read_spec(df, row_count, row_start_idx, row_end_idx):
@@ -31,14 +31,14 @@ def df_read_spec(df, row_count, row_start_idx, row_end_idx):
     assert row_start_idx > -1 and row_start_idx < row_count, f"row_start_idx must be in the range({0, row_count}]"
     assert row_end_idx > -1 and row_end_idx < row_count, f"row_end_idx must be in the range({0, row_count}]"
 
-    start_obj_idx = df[ (row_start_idx >= df['start_idx']) & (row_start_idx < df['end_idx']) ]['_partitionId'].item()
+    start_obj_idx = df[ (row_start_idx >= df['start_idx']) & (row_start_idx < df['end_idx']) ]['id'].item()
     #max is needed to handle the case when the row_end_idx matches the end row of a partition and the start row of a partition
     #if the row_end_idx matches 2 partitions, calling item results in ValueError: can only convert an array of size 1 to a Python scalar
-    end_obj_idx_res = df[ (row_end_idx >= df['start_idx']) & (row_end_idx <= df['end_idx']) ]['_partitionId'].max()    
+    end_obj_idx_res = df[ (row_end_idx >= df['start_idx']) & (row_end_idx <= df['end_idx']) ]['id'].max()    
     end_obj_idx = end_obj_idx_res if isinstance(end_obj_idx_res, int) else end_obj_idx_res.item()
 
-    start_obj_idx = df [ df['_partitionId'] == start_obj_idx ].index.values.item()
-    end_obj_idx = df [ df['_partitionId'] == end_obj_idx ].index.values.item()
+    start_obj_idx = df [ df['id'] == start_obj_idx ].index.values.item()
+    end_obj_idx = df [ df['id'] == end_obj_idx ].index.values.item()
 
     if row_end_idx > row_start_idx:
         
