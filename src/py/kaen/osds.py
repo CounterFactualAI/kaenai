@@ -1,12 +1,13 @@
+import re
 import fsspec
 import tempfile
 import warnings
 
 import pandas as pd
 
-def make_metadata_df(glob = None, df = None, header = None):    
+def make_metadata_df(glob = None, df = None, header = 'infer', sep = ','): 
     assert glob is not None or df is not None, "Either glob or df must be specified"
-    df = pd.read_csv(f"filecache::{glob}", header) if glob else df
+    df = pd.read_csv(f"filecache::{glob}", sep = sep, header = header) if glob else df
     assert set(df.columns) == set(['id', 'count']), "The metadata source must include id and count columns"
     df = df.sort_values(by='id', ignore_index=True)
     df['end_idx'] = df['count'].cumsum()
@@ -168,8 +169,14 @@ class BaseObjectStorageDataset():
         else:            
             self.metadata_df = make_metadata_df_fn(glob = metadata_glob)
             
-        self.metadata_df['uri'] = pd.Series(self.objs).apply(lambda s: f"{protocol}://{s}")
         
+        #TODO: improve: right now assumes that the uri has the matching ID specified in 'part-00000-' substring inthe file
+        objs_df = pd.DataFrame(columns=['uri'], data = pd.Series(self.objs).apply(lambda s: f"{protocol}://{s}"))
+        id_re = re.compile('part-(\d{5})-')
+        objs_df['id'] = objs_df['uri'].apply(lambda s: int(id_re.findall(s)[0]))
+        self.metadata_df = self.metadata_df.merge(objs_df, on = 'id')
+        #TODO: improve
+
         self.obj_count = len(self.metadata_df)
         self.row_count = self.metadata_df.iloc[-1]['end_idx']
 
