@@ -35,7 +35,10 @@ def spark_df_to_stats_pandas_df(spark_df,
     
   return summary_df
 
-def pandas_df_to_spark_df(spark, pandas_df):
+def pandas_df_to_spark_df(spark, pandas_df, save_index = True):
+  
+  pandas_df = pandas_df.reset_index() if save_index is True else pandas_df
+
   return spark.createDataFrame( pandas_df, list(pandas_df.columns) )
 
 from pyspark.sql.functions import spark_partition_id
