@@ -23,8 +23,10 @@ def objs_to_metadata_df(objs, header = None):
             try:
                 df = pd.read_csv(f"filecache::{obj}", header = header)
                 rows.append({"id": idx, "count": len(df),})
-            except pd.errors.EmptyDataError:                
-                rows.append({"id": idx, "count": 0,})
+            except pd.errors.EmptyDataError:           
+                pass
+                # ignore empty shards      
+                # rows.append({"id": idx, "count": 0,})
     return pd.DataFrame(rows)
 
 def df_read_spec(df, row_count, row_start_idx, row_end_idx):
@@ -97,7 +99,7 @@ class BaseObjectStorageDataset():
             if metadata_glob is None:
                 index_metadata = True
                 import warnings
-                warnings.warn("metadata_glob is not specified at initialization, attempting to proceed with index_metadata=True which can take a while")
+                warnings.warn("metadata_glob is not specified at initialization, attempting to proceed with index_metadata=True which can take a while for large objects.")
             else:
                 index_metadata = False
         else:
@@ -155,33 +157,54 @@ class BaseObjectStorageDataset():
 
         # get the object paths matching the glob
         if protocol in ('http', 'https'):
-            protocol, uri = fsspec.core.split_protocol(glob)
+            _, uri = fsspec.core.split_protocol(glob)
             self.objs = [uri]
         else:
             self.objs = self.fs.glob(glob)
 
         if not isinstance(self.objs, list) or not len(self.objs):
             raise RuntimeWarning(f"Specified glob pattern {self.glob} failed to match any objects. Ensure that the permission setting are configured correctly using storage_options before trying again.")
-            
-        if index_metadata is None or index_metadata is True:
-            objs = [f"{protocol}://{obj}" for obj in self.objs]
-            self.metadata_df = make_metadata_df_fn(df = objs_to_metadata_df_fn(objs, header = self.header))
+
+        self.objs = [f"{protocol}://{obj}" for obj in self.objs]
+
+        # if the shard metadata is unavailable
+        # use the objects in the glob to generate the metadata
+        # with the count of lines of records per shard            
+        if index_metadata is None or index_metadata is True:            
+            self.metadata_df = make_metadata_df_fn(df = objs_to_metadata_df_fn(self.objs, header = self.header))
         else:            
             self.metadata_df = make_metadata_df_fn(glob = metadata_glob)
-            
-        
+                
+        # if the number of shards is identical to the number of metadata records
+        if len(self.objs) == len(self.metadata_df):
+            self.metadata_df = self.metadata_df.sort_values(by = 'id', ascending = True)
+            self.metadata_df['uri'] = pd.Series(name = 'uri', data = self.objs).sort_values(ascending=True)
+
+        else:            
+            # query for obj sizes in order to later ignore the empty shards 
+            # because they are not in the metadata dataframe
+            glob_dict = self.fs.glob(glob, detail = True)
+            kvs = glob_dict.items()
+
+            objs_df = pd.DataFrame(data = map( lambda kv : (kv[1]['Key'], kv[1]['Size']), kvs ), columns = ['key', 'size'] )
+            # use just the non-empty shards / partitions
+            objs_df = objs_df[ objs_df['size'] > 0 ]
+
+            assert len(objs_df) == len(self.metadata_df), f"The number of the non-empty objects matching the glob pattern {len(objs_df)} is not equal to the number of the non-empty shards {len(self.metadata_df)}."
+
+            self.metadata_df['uri'] = objs_df['key'].apply(lambda s: f"{protocol}://{s}").sort_values(ascending=True)
+
         #TODO: improve: right now assumes that the uri has the matching ID specified in 'part-00000-' substring inthe file
-        objs_df = pd.DataFrame(columns=['uri'], data = pd.Series(self.objs).apply(lambda s: f"{protocol}://{s}"))
-        id_re = re.compile('part-(\d{5})-')
-        objs_df['id'] = objs_df['uri'].apply(lambda s: int(id_re.findall(s)[0]))
-        self.metadata_df = self.metadata_df.merge(objs_df, on = 'id')
+        # objs_df = pd.DataFrame(columns=['uri'], data = pd.Series(self.objs).apply(lambda s: f"{protocol}://{s}"))
+        # id_re = re.compile('part-(\d{5})-')
+        # objs_df['id'] = objs_df['uri'].apply(lambda s: int(id_re.findall(s)[0]))
+        # self.metadata_df = self.metadata_df.merge(objs_df, on = 'id')
         #TODO: improve
 
         self.obj_count = len(self.metadata_df)
         self.row_count = self.metadata_df.iloc[-1]['end_idx']
 
     def __iter__(self):
-
         shard_start_idx = self.worker * self.shard_size
         while self.max_shards:
             try:
@@ -197,22 +220,24 @@ class BaseObjectStorageDataset():
                     #query rows based on actual indicies in the dataset
                     row_start_idx = row_start_idx % self.row_count
                     row_end_idx = row_end_idx % self.row_count
-
                     if self.header is None:
                         for (skiprows, nrows, uri) in df_read_spec(self.metadata_df, self.row_count, row_start_idx, row_end_idx):
                             src_df_list.append( pd.read_csv(f"filecache::{uri}", header = None, nrows=nrows, skiprows=skiprows) )
 
                     elif self.header == 'infer' or self.header == 0:                        
                         for (skiprows, nrows, uri) in df_read_spec(self.metadata_df, self.row_count, row_start_idx, row_end_idx):
-                            
+
                             if (skiprows == 0):
                                 #skiprows == 0 when we are at the top of the file with a (potential) header                            
                                 df = pd.read_csv(f"filecache::{uri}", header = self.header, nrows = nrows, skiprows = 0)
-                                
+
+                                # set columns to numbers since reseting the index drops the data types
+                                df.columns = list(range(len(df.columns)))
+
                                 #silly hack because pandas doesn't let me to reset the index along the columns axis
-                                df = df.T
-                                df.reset_index(drop = True, inplace = True)
-                                df = df.T
+                                # df = df.T
+                                # df.reset_index(drop = True, inplace = True)
+                                # df = df.T
 
                             else:
                                 #(skiprows+1) skip the extra row  to account for the skipped header

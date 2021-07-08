@@ -4,13 +4,13 @@ import setuptools
 
 require_optuna = ["optuna", "sklearn", "plotly", "kaleido"]
 require_osds = ['fsspec', 'pandas', 's3fs']
-require_spark = ["numpy", "pandas", "scipy", "pyspark"]
+require_spark = ["numpy", "pandas", "scipy"]
 
 all = require_optuna + require_osds + require_spark
 
 setuptools.setup(
     name="kaen",
-    version="1.0.1.7",
+    version="1.0.1.14",
     author="CounterFactual.AI LLC",
     author_email="kaen@counterfactual.ai",
     description="kaen is a friendly open source toolkit to help you train and deploy deep learning models in public clouds",

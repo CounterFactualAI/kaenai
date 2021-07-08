@@ -42,8 +42,14 @@ def pandas_df_to_spark_df(spark, pandas_df, save_index = True):
   return spark.createDataFrame( pandas_df, list(pandas_df.columns) )
 
 from pyspark.sql.functions import spark_partition_id
-def spark_df_to_shards_df(spark, spark_df):
-  return ( spark_df
-          .withColumn("id", spark_partition_id())
+def spark_df_to_shards_df(spark, spark_df, include_empty_zero_id = False):
+  df = ( spark_df
+          .withColumn("id", spark_partition_id() )
           .groupBy("id")
           .count() )
+
+  # needed to support scenarios where pyspark saves an empty shard
+  if include_empty_zero_id:
+    df = df.union( spark.createDataFrame( [{'id': 0, 'count': 0}] ) )
+
+  return df
