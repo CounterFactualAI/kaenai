@@ -1,3 +1,4 @@
+import os
 import tempfile
 
 def get_numeric_csv_data(header = True):
@@ -57,7 +58,30 @@ def test_local_instantiate_header_shard_size_2():
 															max_shards = 4)
 	return osds
 
-def test_s3_instantiate_noheader_shard_size_2():	
+def test_https_instantiate_headerless_shard_size_default():
+	from kaen.osds import BaseObjectStorageDataset
+	osds = BaseObjectStorageDataset(f"https://raw.githubusercontent.com/osipov/smlbook/master/train.csv")
+	return osds
+
+def test_http_noheader_shard_size_4_iter_2():
+	from kaen.osds import BaseObjectStorageDataset
+	osds = BaseObjectStorageDataset(f"https://raw.githubusercontent.com/osipov/smlbook/master/train.csv",
+																	shard_size = 4)
+	df = next(iter(osds))
+	assert len(df) == 4
+
+	df = next(iter(osds))
+	assert len(df) == 4
+
+	return osds
+	
+
+def test_s3_aws_credentials():
+	assert 'AWS_ACCESS_KEY_ID' in os.environ, "AWS_ACCESS_KEY_ID not specified, S3 tests that require credentials will fail"
+	assert 'AWS_SECRET_ACCESS_KEY' in os.environ, "AWS_SECRET_ACCESS_KEY not specified, S3 tests that require credentials will fail"
+
+def test_s3_instantiate_noheader_shard_size_2():
+	test_s3_aws_credentials()
 	from kaen.osds import BaseObjectStorageDataset
 	osds = BaseObjectStorageDataset(f"s3://noaa-ghcn-pds/csv/1763.csv",
 															header = None,
@@ -65,7 +89,8 @@ def test_s3_instantiate_noheader_shard_size_2():
 															max_shards = 1)
 	return osds															
 
-def test_s3_instantiate_noheader_shard_size_365_iter_2():	
+def test_s3_instantiate_noheader_shard_size_365_iter_2():
+	test_s3_aws_credentials()
 	from kaen.osds import BaseObjectStorageDataset
 	osds = BaseObjectStorageDataset(f"s3://noaa-ghcn-pds/csv/1763.csv",
 															header = None,

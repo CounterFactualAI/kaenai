@@ -1,4 +1,5 @@
 import tempfile
+from test_base_osds_constructor import test_s3_aws_credentials
 
 def get_numeric_csv_data(header = True):
 	header = """
@@ -36,9 +37,12 @@ def test_import():
 	
 
 def test_s3_instantiate_torch_osds_shard_size_2():	
+	test_s3_aws_credentials()
+
 	from kaen.torch import ObjectStorageDataset
 	osds = ObjectStorageDataset(f"s3://noaa-ghcn-pds/csv/1763.csv",
 															shard_size = 2, 
 															max_shards = 1)
+	
 	return osds															
 

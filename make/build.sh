@@ -15,7 +15,7 @@ elif [ $1 == "env/test" ] ; then
 
 	python3 -m venv env/test
 	source env/test/bin/activate	
-	pip install pytest
+	pip install pytest pyspark
 	pip uninstall $( ls -t dist/*.tar.gz | head -n 1 )
 	pip install $( ls -t dist/*.tar.gz | head -n 1 )
 	pip install kaen[all]

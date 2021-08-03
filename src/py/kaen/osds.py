@@ -5,7 +5,7 @@ import warnings
 
 import pandas as pd
 
-def make_metadata_df(glob = None, df = None, header = 'infer', sep = ','): 
+def make_shards_df(glob = None, df = None, header = 'infer', sep = ','): 
     assert glob is not None or df is not None, "Either glob or df must be specified"
     df = pd.read_csv(f"filecache::{glob}", sep = sep, header = header) if glob else df
     assert set(df.columns) == set(['id', 'count']), "The metadata source must include id and count columns"
@@ -15,7 +15,7 @@ def make_metadata_df(glob = None, df = None, header = 'infer', sep = ','):
     df = df[['id', 'start_idx', 'end_idx']]
     return df
 
-def objs_to_metadata_df(objs, header = None):
+def objs_to_shards_df(objs, header = None):
     rows = []
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
@@ -80,49 +80,55 @@ class BaseObjectStorageDataset():
     def __init__(self, 
                  glob, 
                  header = 'infer', 
-                 index_metadata = None,
-                 metadata_glob = None, 
-                 make_metadata_df_fn = make_metadata_df, 
-                 objs_to_metadata_df_fn = objs_to_metadata_df,
+
+                 index_shards = None,
+                 shards_glob = None, 
+                 make_shards_df_fn = make_shards_df, 
+                 objs_to_shards_df_fn = objs_to_shards_df,
+
+                 stats_glob = True,
+
                  worker = 0, 
                  replicas = 1, 
-                 shard_size = 1,                   
+                 shard_size = 1,   
+                 batch_size = None,                
                  max_shards = None,
+
                  storage_options = None, 
                  cache_dir = None,):
+                 
         assert glob, "glob must be specified"
         self.glob = glob
-        
+
         self.header = header
 
-        if index_metadata is None:
-            if metadata_glob is None:
-                index_metadata = True
-                import warnings
-                warnings.warn("metadata_glob is not specified at initialization, attempting to proceed with index_metadata=True which can take a while for large objects.")
-            else:
-                index_metadata = False
-        else:
-            assert isinstance(index_metadata, bool), "index_metadata must be set to True or False"
-
-        assert make_metadata_df_fn, "make_metadata_df_fn must be specified"
-        self.make_metadata_df_fn = make_metadata_df_fn
-
-        if index_metadata is None \
-                or index_metadata is True \
-                or metadata_glob is not None:
-            assert objs_to_metadata_df_fn, "objs_to_metadata_df_fn must be specified"
-            self.objs_to_metadata_df_fn = objs_to_metadata_df_fn
-
+        #init worker and replicas        
         assert worker is not None or replicas is not None, "Both worker and replicas must be specified together along with shard_size"
         assert worker > -1 and worker < replicas, f"worker must be in the range [0, {replicas})"
         self.worker = worker
         self.replicas = replicas
-
         if self.replicas > 1:
             assert shard_size, "shard_size must be specified if replicas is greater than 1"
-        self.shard_size = shard_size
 
+        #resolve batch_size, shard_size, and max_shards
+        assert batch_size is not None or shard_size is not None, "either batch_size or shard_size must be specified"
+        if shard_size is not None and batch_size is not None:
+            assert type(batch_size) is int and batch_size > 0 and type(shard_size) is int and shard_size > 0, "If batch_size and shard_size are specified, both must be greater than zero integers"
+            #TODO: For now default to the smaller size
+            if batch_size <= shard_size:
+                warnings.warn(f"defaulting to shard_size of {batch_size}")
+                shard_size = batch_size
+            else:
+                warnings.warn(f"defaulting to batch_size of {shard_size}")
+                batch_size = shard_size
+        elif shard_size is not None and batch_size is None:
+            assert type(shard_size) is int and shard_size > 0, "The value for shard_size must be a greater than zero integer"
+            warnings.warn(f"defaulting to batch_size of {shard_size}")
+            batch_size = shard_size
+        elif batch_size is not None and shard_size is None:
+            assert type(batch_size) is int and batch_size > 0, "The value for batch_size must be a greater than zero integer"
+            shard_size = batch_size        
+        self.shard_size = shard_size
         self.max_shards = max_shards if max_shards else float('nan')
 
         # set the platform-specific temporary directory
@@ -167,18 +173,70 @@ class BaseObjectStorageDataset():
 
         self.objs = [f"{protocol}://{obj}" for obj in self.objs]
 
+        #create a stats dataframe unless this feature is turned off
+        if stats_glob is None or stats_glob is False:
+            self.stats_df = None
+        else:
+            #if not specified explicitly try to fall back to default location
+            if type(stats_glob) is not str and protocol not in ('http', 'https'):
+                maybe_stats_glob = f"{protocol}://{self.fs._parent(glob)}/.meta/stats/"
+                maybe_stats = self.fs.glob(maybe_stats_glob)
+                if not isinstance(maybe_stats, list) or not len(maybe_stats):
+                    warnings.warn(f"stats_glob is not explicitly specified at initialization, failed to find stats metadata at default location {maybe_stats_glob}")
+                    stats_glob = None
+                else:
+                    [stats_glob] = maybe_stats
+                    stats_glob = f"{protocol}://{stats_glob}"
+                    warnings.warn(f"stats_glob is not specified at initialization, defaulting to stats_glob={stats_glob}")
+            
+            if stats_glob is not None:
+                self.stats_df = pd.read_csv(f"filecache::{stats_glob}")
+
+        #figure out the metadata
+        if index_shards is None:   
+            
+            #ignore fall back with protocols that dont support glob
+            if shards_glob is None and protocol not in ('http', 'https'):
+                maybe_shards_glob = f"{protocol}://{self.fs._parent(glob)}/.meta/shards/"
+                maybe_shards = self.fs.glob(maybe_shards_glob)
+                if not isinstance(maybe_shards, list) or not len(maybe_shards):
+                    warnings.warn(f"shards_glob is not specified at initialization, failed to find shard metadata at default location {maybe_shards_glob}")
+                else:
+                    [shards_glob] = maybe_shards
+                    shards_glob = f"{protocol}://{shards_glob}"
+                    warnings.warn(f"shards_glob is not specified at initialization, defaulting to shards_glob={shards_glob}")
+
+
+            if shards_glob is None:
+                index_shards = True
+                warnings.warn("shards_glob is not specified at initialization, attempting to proceed with index_shards=True which can take a while for large objects.")
+            else:
+                index_shards = False
+        else:
+            assert isinstance(index_shards, bool), "index_shards must be set to True or False"
+
+        assert make_shards_df_fn, "make_shards_df_fn must be specified"
+        self.make_shards_df_fn = make_shards_df_fn
+
+        if index_shards is None \
+                or index_shards is True \
+                or shards_glob is not None:
+            assert objs_to_shards_df_fn, "objs_to_shards_df_fn must be specified"
+            self.objs_to_shards_df_fn = objs_to_shards_df_fn
+
+
         # if the shard metadata is unavailable
         # use the objects in the glob to generate the metadata
         # with the count of lines of records per shard            
-        if index_metadata is None or index_metadata is True:            
-            self.metadata_df = make_metadata_df_fn(df = objs_to_metadata_df_fn(self.objs, header = self.header))
+        if index_shards is None or index_shards is True:            
+            self.shards_df = make_shards_df_fn(df = objs_to_shards_df_fn(self.objs, header = self.header))
         else:            
-            self.metadata_df = make_metadata_df_fn(glob = metadata_glob)
+            self.shards_df = make_shards_df_fn(glob = shards_glob)
                 
         # if the number of shards is identical to the number of metadata records
-        if len(self.objs) == len(self.metadata_df):
-            self.metadata_df = self.metadata_df.sort_values(by = 'id', ascending = True)
-            self.metadata_df['uri'] = pd.Series(name = 'uri', data = self.objs).sort_values(ascending=True)
+        if len(self.objs) == len(self.shards_df):
+            self.shards_df = self.shards_df.sort_values(by = 'id', ascending = True)
+            self.shards_df['uri'] = pd.Series(name = 'uri', data = self.objs).sort_values(ascending=True)
 
         else:            
             # query for obj sizes in order to later ignore the empty shards 
@@ -190,19 +248,19 @@ class BaseObjectStorageDataset():
             # use just the non-empty shards / partitions
             objs_df = objs_df[ objs_df['size'] > 0 ]
 
-            assert len(objs_df) == len(self.metadata_df), f"The number of the non-empty objects matching the glob pattern {len(objs_df)} is not equal to the number of the non-empty shards {len(self.metadata_df)}."
+            assert len(objs_df) == len(self.shards_df), f"The number of the non-empty objects matching the glob pattern {len(objs_df)} is not equal to the number of the non-empty shards {len(self.shards_df)}."
 
-            self.metadata_df['uri'] = objs_df['key'].apply(lambda s: f"{protocol}://{s}").sort_values(ascending=True)
+            self.shards_df['uri'] = objs_df['key'].apply(lambda s: f"{protocol}://{s}").sort_values(ascending=True)
 
         #TODO: improve: right now assumes that the uri has the matching ID specified in 'part-00000-' substring inthe file
         # objs_df = pd.DataFrame(columns=['uri'], data = pd.Series(self.objs).apply(lambda s: f"{protocol}://{s}"))
         # id_re = re.compile('part-(\d{5})-')
         # objs_df['id'] = objs_df['uri'].apply(lambda s: int(id_re.findall(s)[0]))
-        # self.metadata_df = self.metadata_df.merge(objs_df, on = 'id')
+        # self.shards_df = self.shards_df.merge(objs_df, on = 'id')
         #TODO: improve
 
-        self.obj_count = len(self.metadata_df)
-        self.row_count = self.metadata_df.iloc[-1]['end_idx']
+        self.obj_count = len(self.shards_df)
+        self.row_count = self.shards_df.iloc[-1]['end_idx']
 
     def __iter__(self):
         shard_start_idx = self.worker * self.shard_size
@@ -221,11 +279,11 @@ class BaseObjectStorageDataset():
                     row_start_idx = row_start_idx % self.row_count
                     row_end_idx = row_end_idx % self.row_count
                     if self.header is None:
-                        for (skiprows, nrows, uri) in df_read_spec(self.metadata_df, self.row_count, row_start_idx, row_end_idx):
+                        for (skiprows, nrows, uri) in df_read_spec(self.shards_df, self.row_count, row_start_idx, row_end_idx):
                             src_df_list.append( pd.read_csv(f"filecache::{uri}", header = None, nrows=nrows, skiprows=skiprows) )
 
                     elif self.header == 'infer' or self.header == 0:                        
-                        for (skiprows, nrows, uri) in df_read_spec(self.metadata_df, self.row_count, row_start_idx, row_end_idx):
+                        for (skiprows, nrows, uri) in df_read_spec(self.shards_df, self.row_count, row_start_idx, row_end_idx):
 
                             if (skiprows == 0):
                                 #skiprows == 0 when we are at the top of the file with a (potential) header                            
@@ -249,7 +307,7 @@ class BaseObjectStorageDataset():
                         raise ValueError(f"header attribute cannot be set to {self.header}")
 
                     # map(lambda df: df.columns, src_df_list)
-                    # assert len(set(map(lambda df: df.shape[1], src_df_list))) == 1, f"Failed to process in the following fragment of the dataset {df_read_spec(self.metadata_df, self.row_count, row_start_idx, row_end_idx)} due to a change in the number of the columns."
+                    # assert len(set(map(lambda df: df.shape[1], src_df_list))) == 1, f"Failed to process in the following fragment of the dataset {df_read_spec(self.shards_df, self.row_count, row_start_idx, row_end_idx)} due to a change in the number of the columns."
 
                 yield pd.concat(
                     objs = src_df_list,
