@@ -45,7 +45,7 @@ elif [ $1 == "dist" ] ; then
 	source ../kaenai_env/build/bin/activate
 
 	pushd src/py
-	#python setup.py sdist -d ../../dist bdist_wheel -d ../../dist
+	python setup.py sdist -d ../../dist bdist_wheel -d ../../dist
 	popd 
 
 	deactivate
