@@ -1,23 +1,25 @@
 # Licensed under the GNU General Public License v3.0. See footer for details.
 import setuptools
 
-
+require_cli = ["click", "python-dotenv"]
+require_mlflow = ["mlflow"]
+require_docker = ["docker"]
 require_optuna = ["optuna", "sklearn", "plotly", "kaleido"]
 require_osds = ['fsspec', 'pandas', 's3fs']
 require_spark = ["numpy", "pandas", "scipy"]
 
-all = require_optuna + require_osds + require_spark
+all = require_cli + require_optuna + require_osds + require_spark + require_mlflow + require_docker
 
 setuptools.setup(
     name="kaen",
-    version="1.0.1.15",
+    version="1.0.1.31",
     author="CounterFactual.AI LLC",
     author_email="kaen@counterfactual.ai",
-    description="kaen is a friendly open source toolkit to help you train and deploy deep learning models in public clouds",
+    description="kaen is a friendly open source toolkit to help you train and deploy PyTorch deep learning models in public clouds",
     url="https://github.com/CounterFactualAI/kaenai",
     license="GPL v3.0",
     install_requires=[
-      'torch',
+      # 'torch',
       # 'gcsfs',
       # 'click', 
 			# 'python-dotenv', 
@@ -28,13 +30,19 @@ setuptools.setup(
 			"optuna":  require_optuna,			
       "osds": require_osds,
       "spark": require_spark,
+      "mlflow": require_mlflow,
+      "cli": require_cli,
+      "docker": require_docker,
       "latest": [""],
       "stable": [""],
       "all": all,
     },
     include_package_data=True,
 		py_modules=['kaen.main'],
-    
+    entry_points="""
+      [console_scripts]
+      kaen=kaen.main:cli
+    """,    
     # package_dir = {'': 'src/py'},
     packages=setuptools.find_packages(
       # where = 'src/py',
