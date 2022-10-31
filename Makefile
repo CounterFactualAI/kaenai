@@ -1,6 +1,9 @@
 all:
 	echo TBD
 
+docker:
+	@make/container/guest.sh $@
+
 install_deps:
 	pip install twine
 
