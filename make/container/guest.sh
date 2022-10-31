@@ -10,14 +10,14 @@ then
 	exit 1
 else
 	source $AWS_VARS && \
-	docker run -it \
-	-u root \
+	docker run --privileged \
+	-it \
+	-u root  \
 	-e GRANT_SUDO=yes \
 	-e AWS_ACCESS_KEY_ID=$AWS_ACCESS_KEY_ID \
 	-e AWS_SECRET_ACCESS_KEY=$AWS_SECRET_ACCESS_KEY \
 	-e AWS_DEFAULT_REGION=$AWS_DEFAULT_REGION \
 	--mount type=bind,src=$(pwd),dst=/kaenai \
-	--entrypoint /bin/bash \
 	$DEV_IMAGE_ID
 	exit 0
 fi
