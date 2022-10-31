@@ -14,10 +14,9 @@ RUN cd / \
 	&& git clone https://github.com/CounterFactualAI/kaenai.git \
 	&& cd kaenai \
 	# && pip install pytest pyspark twine kaen[all] \
-	# && make env/test \
+	&& make env/test \
 	&& make env/build \
 	&& cd / \
-	&& find /kaenai_env \
 	&& rm -r /kaenai
 
 WORKDIR /kaenai
