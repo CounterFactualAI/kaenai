@@ -20,8 +20,8 @@ elif [ $1 == "env/test" ] ; then
 	source ../kaenai_env/test/bin/activate	
 	python -m pip install --upgrade pip
 	
-	pip install pytest pyspark
-	pip uninstall $( ls -t dist/*.tar.gz | head -n 1 )
+	pip install pytest pyspark torch
+	pip uninstall $(cd dist && ls -t *.tar.gz | head -c -8)
 	pip install $( ls -t dist/*.tar.gz | head -n 1 )
 	pip install kaen[all]
 
@@ -55,17 +55,22 @@ elif [ $1 == "dist" ] ; then
 elif [ $1 == "test" ] ; then
 
 	source ../kaenai_env/test/bin/activate
+
 	pip install --upgrade $( ls -t dist/*.tar.gz | head -n 1 )
 	pytest src/py/test
+
 	deactivate
 
 elif [ $1 == "session" ] ; then
 
 	source ../kaenai_env/test/bin/activate
-	pip uninstall $( ls -t dist/*.tar.gz | head -n 1 )
+
+	pip uninstall $(cd dist && ls -t *.tar.gz | head -c -8)
 	pip install --editable src/py
 	
 	bash
+
+	deactivate
 
 else
 
