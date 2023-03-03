@@ -1,7 +1,7 @@
-BASE_DOCKER_IMAGE_DEFAULT := library/ubuntu
-BASE_DOCKER_TAG_DEFAULT := 20.10
+BASE_DOCKER_IMAGE_DEFAULT := ubuntu
+BASE_DOCKER_TAG_DEFAULT := 20.04
 
-DOCKER_IMAGE_DEFAULT := kaenai/kaen
+DOCKER_IMAGE_DEFAULT := kaenai/kaen2
 DOCKER_TAG_DEFAULT := latest
 
 ifneq '$(BASE_DOCKER_IMAGE)' ''
@@ -28,11 +28,16 @@ else
 	DOCKER_TAG := $(DOCKER_TAG_DEFAULT)
 endif
 
+.PHONY: build
+
+build: 
+	docker build -t $(DOCKER_IMAGE):$(DOCKER_TAG) .
+
 pull_base:
 	docker pull $(BASE_DOCKER_IMAGE):$(BASE_DOCKER_TAG)
 
 rm_base:
-	docker image rm $(BASE_DOCKER_IMAGE):$(BASE_DOCKER_TAG)
+	-docker image rm $(BASE_DOCKER_IMAGE):$(BASE_DOCKER_TAG)
 
 rm_instances:
 	docker ps -a | grep $(DOCKER_IMAGE):$(DOCKER_TAG) | cut -f 1 -d ' ' | xargs docker rm
@@ -46,8 +51,6 @@ clean:
 	rm -rf terraform-docker-swarm-aws
 	rm -rf docker
 
-build: 
-	docker build -t $(DOCKER_IMAGE):$(DOCKER_TAG) .
 
 rebuild: clean rm_image rm_base pull_base prep_build build
 

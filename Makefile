@@ -1,3 +1,5 @@
+export PYTHON=/usr/bin/python3
+
 all:
 	echo TBD
 

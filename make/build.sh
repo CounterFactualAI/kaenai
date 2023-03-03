@@ -4,9 +4,9 @@ echo $(pwd)
 
 if [ $1 == "env/build" ] ; then
 	mkdir -p ../kaenai_env/build
-	python -m venv ../kaenai_env/build
+	$PYTHON -m venv ../kaenai_env/build
 	source ../kaenai_env/build/bin/activate
-	python -m pip install --upgrade pip
+	$PYTHON -m pip install --upgrade pip
 
 	pip install --upgrade wheel
 	
@@ -16,9 +16,10 @@ if [ $1 == "env/build" ] ; then
 
 elif [ $1 == "env/test" ] ; then
 	mkdir -p ../kaenai_env/test
-	python -m venv ../kaenai_env/test
+	
+	$PYTHON -m venv ../kaenai_env/test
 	source ../kaenai_env/test/bin/activate	
-	python -m pip install --upgrade pip
+	$PYTHON -m pip install --upgrade pip
 	
 	pip install pytest pyspark torch
 	pip uninstall $(cd dist && ls -t *.tar.gz | head -c -8)
@@ -33,7 +34,7 @@ elif [ $1 == "clean" ] ; then
 	source ../kaenai_env/build/bin/activate
 
 	pushd src/py
-	python setup.py clean
+	$PYTHON setup.py clean
 	popd 
 
 	deactivate
@@ -45,7 +46,7 @@ elif [ $1 == "dist" ] ; then
 	source ../kaenai_env/build/bin/activate
 
 	pushd src/py
-	python setup.py sdist -d ../../dist bdist_wheel -d ../../dist
+	$PYTHON setup.py sdist -d ../../dist bdist_wheel -d ../../dist
 	popd 
 
 	deactivate

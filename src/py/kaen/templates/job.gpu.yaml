@@ -1,0 +1,156 @@
+# ---
+#manager-service
+apiVersion: v1
+kind: Service
+metadata:
+  name: kaen-k8s-manager
+  labels:
+    svc: kaen-k8s-manager-svc
+spec:
+  type: NodePort
+  selector:
+    #route traffic to pods that match
+    run: kaen-pytorch-manager-pod
+  ports:
+    - protocol: TCP
+      port: 23400
+      targetPort: 23400
+---
+#manager
+apiVersion: v1
+kind: Pod
+metadata:
+  name: kaen-pytorch-manager-pod
+  labels:
+    run: kaen-pytorch-manager-pod
+spec:
+  restartPolicy: Never
+  #TODO option to use master node to do work
+  hostname: kaen-pytorch-manager-pod
+  subdomain: kaen-k8s-manager
+  nodeSelector:
+    node-role.kubernetes.io/master: 'true'
+  containers:
+    - name: kaen-pytorch-manager
+      imagePullPolicy: Always 
+      image: kaenai/pytorch:1.13.0-cuda11.6-cudnn8-runtime
+      env:
+      - name: KAEN_WORLD_SIZE
+        value: "2"
+      - name: KAEN_RANK
+        value: "0"
+      - name: KAEN_GLOBAL_RANK
+        value: "0"
+      - name: KAEN_JOB_MANAGER_HOST
+        value: "kaen-pytorch-manager-pod.kaen-k8s-manager.default.svc.cluster.local"
+      - name: KAEN_NPROC_PER_NODE
+        value: "1"
+      - name: KAEN_JOB_MANAGER_PORT
+        value: "23400"
+      - name: NVIDIA_VISIBLE_DEVICES
+        value: 'all'
+      command: ["/bin/sh", "-c"]
+      args:
+      - set | grep KAEN ;
+        sleep 60m ;
+      ports:
+      - containerPort: 23400
+      # resources:
+      #   limits:
+      #     nvidia.com/gpu: 4 # requesting 1 GPU
+  tolerations:
+  - key: nvidia.com/gpu
+    operator: Exists
+    effect: NoSchedule
+---
+#workers
+apiVersion: batch/v1          
+kind: Job                     
+metadata:
+  name: kaen-pytorch-worker-job
+spec:                         
+ completions: 1 #TODO
+ parallelism: 1 #TODO
+ completionMode: Indexed
+ template:
+   metadata:
+    generateName: kaen-pytorch-worker-pod-
+    labels:
+      jobgroup: kaen-pytorch-worker-group
+   spec:
+     affinity:    
+      nodeAffinity:
+        requiredDuringSchedulingIgnoredDuringExecution:
+          nodeSelectorTerms:
+          - matchExpressions:
+            - key: worker
+              operator: In
+              values:
+              - "true"
+      podAntiAffinity:
+        requiredDuringSchedulingIgnoredDuringExecution:
+        - labelSelector:
+            matchExpressions:
+            - key: jobgroup
+              operator: In
+              values:
+              - 'kaen-pytorch-worker-group'
+          topologyKey: "kubernetes.io/hostname"
+     restartPolicy: Never     
+    #TODO 
+     tolerations:
+     - key: nvidia.com/gpu
+       operator: Exists
+       effect: NoSchedule
+     containers:
+       - name: kaen-pytorch-worker-pod
+         imagePullPolicy: Always 
+         image:  kaenai/pytorch:1.13.0-cuda11.6-cudnn8-runtime              ##  Image used
+        #  command: ["sleep", "60m"]   ##  Command used to create logs for verification later
+         command: ["/bin/sh", "-c"]
+         args:
+         - export KAEN_RANK=$(expr $JOB_COMPLETION_INDEX + 1) ;
+           set | grep KAEN ;
+           sleep 60m ;
+        #  resources:
+        #   limits:
+        #     nvidia.com/gpu: 4 # requesting 1 GPU
+         env:
+         - name: KAEN_WORLD_SIZE
+           value: "2"
+         - name: KAEN_NPROC_PER_NODE
+           value: "1"
+         - name: KAEN_JOB_MANAGER_HOST
+           value: "kaen-pytorch-manager-pod.kaen-k8s-manager.default.svc.cluster.local"
+         - name: KAEN_JOB_MANAGER_PORT
+           value: "23400"
+         - name: LOGLEVEL
+           value: "DEBUG"
+         - name: NCCL_DEBUG
+           value: "TRACE"
+         - name: NVIDIA_VISIBLE_DEVICES
+           value: 'all'
+         - name: K8S_JOB_COMPLETION_INDEX
+           valueFrom:
+            fieldRef:
+              fieldPath: metadata.annotations['batch.kubernetes.io/job-completion-index']             
+         - name: K8S_NODE_NAME
+           valueFrom:
+            fieldRef:
+              fieldPath: spec.nodeName
+         - name: K8S_POD_NAME
+           valueFrom:
+            fieldRef:
+             fieldPath: metadata.name
+         - name: K8S_POD_NAMESPACE
+           valueFrom:
+            fieldRef:
+             fieldPath: metadata.namespace
+         - name: K8S_POD_IP
+           valueFrom:
+            fieldRef:
+             fieldPath: status.podIP
+         - name: K8S_POD_SERVICE_ACCOUNT
+           valueFrom:
+            fieldRef:
+             fieldPath: spec.serviceAccountName

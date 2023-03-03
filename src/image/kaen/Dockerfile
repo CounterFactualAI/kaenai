@@ -1,10 +1,11 @@
-FROM ubuntu:20.10
+FROM ubuntu:20.04
 
-ENV KAEN_VERSION 0.0.1
-ENV KAEN_BACKEND docker
+ENV KAEN_VERSION 1.1.0.32
+ENV KAEN_BACKEND k8s
 ENV KAEN_PROVIDER aws
 
-ARG TERRAFORM_VERSION=0.14.7
+# ARG TERRAFORM_VERSION=0.14.7
+ARG TERRAFORM_VERSION=1.3.6
 ARG TERRAFORM=terraform_${TERRAFORM_VERSION}_linux_amd64.zip
 
 ENV DEBIAN_FRONTEND noninteractive
@@ -31,11 +32,16 @@ RUN wget --no-check-certificate https://releases.hashicorp.com/terraform/${TERRA
 
 WORKDIR /workspace
 
-RUN mkdir -p /opt/kaen/docker /opt/kaen/k8s
+RUN mkdir -p /opt/kaen/docker && mkdir -p /opt/kaen/k8s/aws
 COPY docker/aws /opt/kaen/docker/aws
-
-RUN cd /opt/kaen/docker/aws \
-	&& terraform init
 
 COPY sh/ /opt/kaen/
 RUN cd /opt/kaen && find . | grep .sh$ | xargs chmod +x
+
+RUN cd /opt/kaen/docker/aws \
+  && unset TF_DATA_DIR \
+	&& terraform init
+
+RUN cd /opt/kaen/k8s/aws \
+	&& unset TF_DATA_DIR \
+	&& terraform init

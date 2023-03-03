@@ -1,0 +1,30 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: img-pull-job
+spec:
+  completions: 1
+  parallelism: 1
+  completionMode: Indexed
+  ttlSecondsAfterFinished: 0
+  template:
+    metadata:
+      labels:
+        jobtype: pulljob 
+    spec:
+      containers:
+      - name: tmp
+        image: image
+        imagePullPolicy: Always
+        command: ["/bin/sh",  "-c", "exit 0"]
+      restartPolicy: Never
+      affinity:
+        podAntiAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+          - labelSelector:
+              matchExpressions:
+              - key: jobtype
+                operator: In
+                values:
+                - 'pulljob'
+            topologyKey: "kubernetes.io/hostname"

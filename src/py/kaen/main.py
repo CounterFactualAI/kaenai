@@ -5,30 +5,50 @@ import uuid
 from dotenv import dotenv_values
 
 VERSION = "0.0.1"
-IMAGE_NAME = "kaenai/kaen"
+IMAGE_NAME = "kaenai/kaen2"
 IMAGE_TAG = "latest"
 IMAGE = f"{IMAGE_NAME}:{IMAGE_TAG}"
 
-def get_backend_provider(dojo = None, job = None):
+def get_or_create_job_store(dojo = None, job = None):
 	if job:
-		job_config = {
-			**dotenv_values(f"{os.getcwd()}/.job/.{job}/env.sh")
-		}
-		dojo_config = {
-			**dotenv_values(f"{os.getcwd()}/.dojo/.{job_config['KAEN_DOJO']}/env.sh")
-		}
-		backend = dojo_config['KAEN_BACKEND']
-		provider = dojo_config['KAEN_PROVIDER']
-		return backend, provider		
-	elif dojo:
-		dojo_config = {
-			**dotenv_values(f"{os.getcwd()}/.dojo/.{dojo}/env.sh")
-		}
-		backend = dojo_config['KAEN_BACKEND']
-		provider = dojo_config['KAEN_PROVIDER']
-		return backend, provider
+		job_dir = f"{os.getcwd()}/.job/.{job}"
+		os.makedirs(job_dir, exist_ok = True)
+		return job_dir
 	else:
 		return None
+
+def save_to_job_store(job, filename, s):
+	job_dir = get_or_create_job_store(job = job)
+	file_path = f"{job_dir}/{filename}"
+	with open(file_path, "w") as file:
+		file.write(s)
+	return file_path
+
+def get_dojo_config(dojo):
+	dojo_config = {
+		**dotenv_values(f"{os.getcwd()}/.dojo/.{dojo}/env.sh")
+	}
+	return dojo_config
+
+def get_job_config(job):
+	job_config = {
+		**dotenv_values(f"{os.getcwd()}/.job/.{job}/env.sh")
+	}
+	return job_config
+	
+def get_backend_provider(dojo = None, job = None):
+	if job:
+		job_config = get_job_config(job)	
+		dojo_config = get_dojo_config(job_config['KAEN_DOJO'])
+	elif dojo:
+		dojo_config = get_dojo_config(dojo)
+	else:
+		return None
+
+	backend = dojo_config['KAEN_BACKEND']
+	provider = dojo_config['KAEN_PROVIDER']
+	
+	return backend, provider
 
 def get_volumes(provider = None):
 	volumes = {f"{os.getcwd()}" : {"bind": "/workspace", "mode": "rw"},}
@@ -65,6 +85,32 @@ def prepare_docker_image(image, name, tag):
 
 	return client
 
+
+def _pty(cmd):
+	import os
+	import pty
+	import tempfile
+	with tempfile.TemporaryFile() as pty_output:
+		def read_pty(fds):
+				"""Append tty output to file descriptor."""
+				data = os.read(fds, 1024)
+				pty_output.write(data)
+				return data
+
+		status = pty.spawn(cmd, read_pty)
+		assert status == 0, f"ERROR: Status code {status}"
+
+def _docker_run_str(image, command, volumes, environment):
+	docker_str = f"""docker run -it"""
+	env_str = [f"""--env {k}={v}""" for k,v in environment.items()]
+	vol_str = []
+	for vol, params in volumes.items():
+			bind = params['bind'] if 'bind' in params else None
+			mode = params['mode'] if 'mode' in params else None
+			vol_str.append(None if None in (vol, bind, mode) else f"""-v {vol}:{bind}:{mode}""")
+	run_str = f"""{docker_str} {' '.join(env_str)} {' '.join(vol_str)} {image} {command}"""
+	return run_str
+
 def _docker_run(client, volumes, environment, command):
 	container = None
 	try:
@@ -99,6 +145,7 @@ def cli():
 @click.option('--manager-instances', default='1', type=int, show_default=True)
 @click.option('--manager-instance-type', default='t3.micro', show_default=True)
 @click.option('--volume-size', default='16', type=int, show_default=True)
+@click.option('--gpu', is_flag=True, required = False, default = False, show_default=True, help="Enable GPU usage when supported by the instance type. [default: 0]")
 @click.option('--ssh-connection-timeout', default='5', type=int, show_default=True)
 @click.option('--ssh-connection-attempts', default='1', type=int, show_default=True)
 def init(provider, 
@@ -108,6 +155,7 @@ def init(provider,
 			manager_instances, 
 			manager_instance_type,
 			volume_size,
+			gpu,
 			ssh_connection_timeout,
 			ssh_connection_attempts):			
 	"""Initialize a training dojo in a specified infrastructure provider."""
@@ -118,6 +166,7 @@ def init(provider,
 			manager_instances, 
 			manager_instance_type,
 			volume_size,
+			gpu,
 			ssh_connection_timeout,
 			ssh_connection_attempts)
 
@@ -130,6 +179,7 @@ class DojoCLI(click.MultiCommand):
 	@click.option('--manager-instances', default='1', type=int, show_default=True)
 	@click.option('--manager-instance-type', default='t3.micro', show_default=True)
 	@click.option('--volume-size', default='16', type=int, show_default=True)
+	@click.option('--gpu', is_flag=True, required = False, default = False, show_default=True, help="Enable GPU usage when supported by the instance type. [default: 0]")
 	@click.option('--ssh-connection-timeout', default='5', type=int, show_default=True)
 	@click.option('--ssh-connection-attempts', default='1', type=int, show_default=True)
 	def init(provider, 
@@ -139,13 +189,14 @@ class DojoCLI(click.MultiCommand):
 				manager_instances, 
 				manager_instance_type,
 				volume_size,
+				gpu,
 				ssh_connection_timeout,
 				ssh_connection_attempts):			
 		"""Initialize a training dojo in a specified infrastructure provider."""
 		provider = provider.strip().lower() if provider is not None and str == type(provider) and len(provider) > 0 else None
 		assert provider == 'aws' or provider == 'local', f"Provider {provider} is not publicly available in version {VERSION}"
-		assert backend == 'docker', f"Backend {backend} is not publicly available in version {VERSION}"
-
+		assert backend == 'docker' or backend == 'k8s', f"Backend {backend} is not publicly available in version {VERSION}"
+		
 		#check for the aws settings
 		if (provider == 'aws'):
 			assert_aws_credentials()
@@ -168,11 +219,12 @@ class DojoCLI(click.MultiCommand):
 						"KAEN_VERSION": VERSION,
 						"KAEN_BACKEND": backend,
 						"KAEN_PROVIDER": provider,
+						"KAEN_DOJO_GPU": "1" if gpu else "0",
 						}
 
 		# volumes = {f"{os.getcwd()}" : {"bind": "/workspace", "mode": "rw"},}
 
-		volumes = get_volumes(provider)
+		# volumes = get_volumes(provider)
 		
 		# if provider == 'local':
 		# 	
@@ -184,30 +236,38 @@ class DojoCLI(click.MultiCommand):
 		if provider in ('local'):
 			print(f"Preparing a dojo using {backend} on {provider} ...")
 		else:
-			print(f"Preparing a dojo using {backend} on {provider} with {worker_instances} worker(s) and {manager_instances} manager(s) ...")
+			print(f"Preparing a dojo using {backend} on {provider} with {worker_instances} worker(s) and {manager_instances} manager(s){', also enabling GPU support' if gpu else ', no GPU support'}...")
 			environment = { **environment, **{
-								"KAEN_DOJO_CONNECT_TIMEOUT": ssh_connection_timeout,
-								"KAEN_DOJO_CONNECT_ATTEMPTS": ssh_connection_attempts,
-								"AWS_ACCESS_KEY_ID": os.environ['AWS_ACCESS_KEY_ID'],
-								"AWS_DEFAULT_REGION": os.environ['AWS_DEFAULT_REGION'],
-								"AWS_SECRET_ACCESS_KEY": os.environ['AWS_SECRET_ACCESS_KEY'],
-								"TF_VAR_instances": worker_instances,
-								"TF_VAR_worker_instance_type": worker_instance_type,
-								"TF_VAR_manager_instances": manager_instances,
-								"TF_VAR_manager_instance_type": manager_instance_type,
-								"TF_VAR_volume_size": volume_size,}
+				"KAEN_DOJO_WORKER_INSTANCES": worker_instances,
+				"KAEN_DOJO_WORKER_INSTANCE_TYPE": worker_instance_type,
+				"KAEN_DOJO_MANAGER_INSTANCES": manager_instances,
+				"KAEN_DOJO_MANAGER_INSTANCE_TYPE": manager_instance_type,
+				"KAEN_DOJO_VOLUME_SIZE": volume_size,
+				"KAEN_DOJO_CONNECT_TIMEOUT": ssh_connection_timeout,
+				"KAEN_DOJO_CONNECT_ATTEMPTS": ssh_connection_attempts,
+				"AWS_ACCESS_KEY_ID": os.environ['AWS_ACCESS_KEY_ID'],
+				"AWS_DEFAULT_REGION": os.environ['AWS_DEFAULT_REGION'],
+				"AWS_SECRET_ACCESS_KEY": os.environ['AWS_SECRET_ACCESS_KEY'],}
 			}
 
-		container = client.containers.run(	image = IMAGE, 
-			command=f"/bin/bash -c '/opt/kaen/{backend}/{provider}/dojo_init.sh'",
-			volumes = volumes,
-			environment = environment,
-			auto_remove = True,
-			detach=True)
+		_docker_run(client,
+								get_volumes(provider), 
+								environment,
+								f"/bin/bash -c '/opt/kaen/{backend}/{provider}/dojo_init.sh'")
+
+		# command = f"/bin/bash -c '/opt/kaen/{backend}/{provider}/dojo_init.sh'"
+
+		# container = client.containers.run(	image = IMAGE, 
+		# 	volumes = volumes,
+		# 	environment = environment,
+		# 	command = command,
+		# 	auto_remove = True,
+		# 	detach=True,
+		# )
 			
-		logs = container.attach(stream = True, logs = True)
-		for s in logs:
-			print(s.decode('utf-8').strip())	
+		# logs = container.attach(stream = True, logs = True)
+		# for s in logs:
+		# 	print(s.decode('utf-8').strip())	
 
 		print(dojo)
 
@@ -310,6 +370,7 @@ class DojoCLI(click.MultiCommand):
 		
 		Finds all dojo instances with the state equal to inactive and force deletes them."""
 		client = prepare_docker()
+		
 		vol = get_volumes()
 		env = {}
 		
@@ -362,7 +423,25 @@ class DojoCLI(click.MultiCommand):
 		logs = container.attach(stream = True, logs = True)
 		for s in logs:
 			print(s.decode('utf-8').strip())	
-	
+
+	@click.command()	
+	@click.argument('dojo')
+	def ssh(dojo):	
+		"""Connect using ssh to the specified dojo."""
+		backend, provider = get_backend_provider(dojo)
+		
+		if 'aws' == provider:
+			assert_aws_credentials()
+		
+		client = prepare_docker()
+
+		volumes = get_volumes(provider)
+		environment = { "KAEN_DOJO": dojo, }
+		cmd = _docker_run_str(f"{IMAGE_NAME}:{IMAGE_TAG}",
+										f"/bin/bash -c '/opt/kaen/dojo_ssh.sh'",
+									volumes, environment, )
+		_pty(cmd.split(' '))
+
 	@click.command()	
 	@click.argument('dojo')
 	def inspect(dojo):	
@@ -401,6 +480,7 @@ class DojoCLI(click.MultiCommand):
 				"rm": DojoCLI.rm,
 				"prune": DojoCLI.prune,
 				"inspect": DojoCLI.inspect,
+				"ssh": DojoCLI.ssh,
 				"init": DojoCLI.init,
 				'activate': DojoCLI.activate}[name]
 
@@ -410,6 +490,23 @@ def dojo():
 	pass
 
 class JobCLI(click.MultiCommand):
+	def parse_args(self, ctx, args):
+		if "--" in args:
+			idx = args.index("--")
+			opt_args = " ".join(args[idx + 1:])
+			ctx.meta['kaen_opt_args'] = opt_args
+			args = args[:idx]
+		
+		super(JobCLI, self).parse_args(ctx, args)
+
+	# @click.command()
+	# @click.option('--dojo', required = True)
+	# @click.option('--image', required = True)
+	# @click.pass_context
+	# def run(ctx, image, dojo, subnet, manager_ip):
+	# 	job = JobCLI.create(image, dojo, None, None)
+	# 	JobCLI.start(ctx, job)
+
 	@click.command()
 	@click.option('--dojo', required = True)
 	@click.option('--image', required = True)
@@ -420,6 +517,11 @@ class JobCLI(click.MultiCommand):
 		The training job must be packaged as a container and available to docker pull 
 		command, in other words docker pull <image> must pull the image."""
 
+		dojo_config = get_dojo_config(dojo)
+		assert len(dojo_config) > 0 and 'KAEN_DOJO_WORKER_INSTANCES' in dojo_config and 'KAEN_DOJO_MANAGER_INSTANCES' in dojo_config, \
+			f"Unable to lookup a valid dojo configuration for dojo {dojo}"
+		replicas = int(dojo_config['KAEN_DOJO_WORKER_INSTANCES']) + int(dojo_config['KAEN_DOJO_MANAGER_INSTANCES'])
+
 		if subnet is not None or manager_ip is not None:
 			assert subnet is not None and manager_ip is not None, "Both --subnet and --manager-ip must be specified"
 			from ipaddress import ip_network, ip_address
@@ -429,7 +531,15 @@ class JobCLI(click.MultiCommand):
 		job = None
 		while not job or job[:1].isalpha() is False:
 			job = uuid.uuid4().hex[:8]			
-		print(f"Creating a job {job} using image {image} in dojo {dojo}")
+		print(f"Creating a job {job} using image {image} in dojo {dojo}...")
+
+		from .templates.render import k8s_image_pull_job_yaml
+		yaml = k8s_image_pull_job_yaml(image, replicas)
+		file_path = save_to_job_store(job, f"img.pull.{job}.yaml", yaml)
+		# with open(file_path, "r") as file:
+		# 	src = file.read().rstrip()
+		# 	print(src)		
+		# return
 
 		backend, provider = get_backend_provider(dojo)
 
@@ -443,10 +553,13 @@ class JobCLI(click.MultiCommand):
 							"KAEN_JOB_MANAGER_IP": manager_ip if subnet else None,
 							}
 
-		_docker_run(client, 
+
+		_docker_run(client,
 								volumes,
 								environment,
-								f"/bin/bash -c '/opt/kaen/{backend}/{provider}/job_create.sh'")
+								f"/bin/bash -c '/opt/kaen/{backend}/{provider}/job_create_2.sh'",
+								)
+
 
 		# container = client.containers.run(image = IMAGE, 
 		# 	command=f"/bin/bash -c '/opt/kaen/{backend}/{provider}/job_create.sh'",
@@ -465,6 +578,8 @@ class JobCLI(click.MultiCommand):
 		# 	print(s.decode('utf-8').strip())	
 		
 		print(job)			
+
+		return job
 
 	@click.command()	
 	@click.argument('job')
@@ -497,13 +612,95 @@ class JobCLI(click.MultiCommand):
 
 	@click.command()
 	@click.argument('job')
-	@click.option('--replicas', default='1', type=int)
+	def terminate(job):
+		"""Terminate a started job. Once terminated, the job no longer runs but remains until removed or pruned."""
+
+		job_config = get_job_config(job)
+		dojo_config = get_dojo_config(job_config['KAEN_DOJO'])
+
+		gpu = dojo_config['KAEN_DOJO_GPU']
+		image = job_config['KAEN_JOB_IMAGE']
+		
+		# from .templates.render import k8s_create_job_yaml
+		# yaml = k8s_create_job_yaml(job, gpu, -1, replicas, image)
+		# file_path = save_to_job_store(job, f"job.{job}.yaml", yaml)
+		# with open(file_path, "r") as file:
+		# 	src = file.read().rstrip()
+		# 	print(src)
+
+		client = prepare_docker()
+
+		backend, provider = get_backend_provider(job = job)
+
+		env = dict({ "KAEN_JOB": job,})
+
+		vol = get_volumes(provider)
+
+		_docker_run(client, 
+								vol,
+								env,
+								f"/bin/bash -c '/opt/kaen/{backend}/{provider}/job_stop_2.sh'")
+
+		# container = client.containers.run(	image = IMAGE, 
+		# 	command=f"/bin/bash -c '/opt/kaen/{backend}/{provider}/job_start.sh'",
+		# 	volumes = vol ,
+		# 	environment = env,
+		# 	auto_remove = True,
+		# 	detach = True)
+
+		# if not detach:
+		# 	logs = container.attach(stream = True, logs = True)
+		# 	for s in logs:
+		# 		print(s.decode('utf-8').strip())	
+
+
+	@click.command(context_settings=dict(
+			ignore_unknown_options=True,
+	))	
+	@click.pass_context
+	@click.argument('job')
+	@click.option('--replicas', required = False, default=-1, type=int, help="Number of the nodes to execute the job. Must be a number in the range starting from 1 and up to the total number of instances in the dojo, or -1. The default value of -1 means use all manager and worker instance nodes to run the job.")
+	@click.option('--nproc_per_node', required = False, default = 1, type=int)
 	@click.option('--detach', is_flag = True, default = False)
 	@click.option('--port', '-p', required = False, default = [], multiple = True, type=click.Tuple([str, str]) )	
 	@click.option('--env', '-e', required = False, default = [], multiple = True, type=click.Tuple([str, str]) )
-	def start(job, replicas, detach, port, env):
+	@click.argument('opt_args', nargs=-1, type=click.UNPROCESSED)
+	def start(ctx, job, replicas, nproc_per_node, detach, port, env, opt_args):
 		"""Start an existing job using the specified number of worker replicas."""
 
+		job_config = get_job_config(job)
+		if len(job_config) == 0 or 'KAEN_DOJO' not in job_config:
+			raise click.BadParameter(
+				f"Unable to lookup a valid dojo for job {job}",
+				param_hint=["job"],
+			)
+
+		dojo_config = get_dojo_config(job_config['KAEN_DOJO'])
+
+		gpu = dojo_config['KAEN_DOJO_GPU']
+		image = job_config['KAEN_JOB_IMAGE']
+		
+		#if use all available 
+		if -1 == replicas:
+			replicas = int(dojo_config['KAEN_DOJO_WORKER_INSTANCES']) + int(dojo_config['KAEN_DOJO_MANAGER_INSTANCES'])
+		elif not(replicas >= 1 and replicas <= (int(dojo_config['KAEN_DOJO_WORKER_INSTANCES']) + int(dojo_config['KAEN_DOJO_MANAGER_INSTANCES']))):
+			raise click.BadParameter(
+            "Must be a number in the range starting from 1 and up to the total number of instances in the dojo, or -1. The default value of -1 means use all manager and worker instance nodes to run the job.",
+            param_hint=["--replicas"],
+        )
+		else:
+			replicas = int(replicas)
+
+		opt_args = ctx.meta['kaen_opt_args'] if 'kaen_opt_args' in ctx.meta else None
+		
+		from .templates.render import k8s_create_job_yaml
+		yaml = k8s_create_job_yaml(job, gpu, replicas, nproc_per_node, image, opt_args)
+		file_path = save_to_job_store(job, f"job.{job}.yaml", yaml)
+		# with open(file_path, "r") as file:
+		# 	src = file.read().rstrip()
+		# 	print(src)		
+		# return
+		
 		client = prepare_docker()
 
 		backend, provider = get_backend_provider(job = job)
@@ -520,7 +717,7 @@ class JobCLI(click.MultiCommand):
 		_docker_run(client, 
 								vol,
 								env,
-								f"/bin/bash -c '/opt/kaen/{backend}/{provider}/job_start.sh'")
+								f"/bin/bash -c '/opt/kaen/{backend}/{provider}/job_start_2.sh'")
 
 		# container = client.containers.run(	image = IMAGE, 
 		# 	command=f"/bin/bash -c '/opt/kaen/{backend}/{provider}/job_start.sh'",
@@ -534,9 +731,13 @@ class JobCLI(click.MultiCommand):
 		# 	for s in logs:
 		# 		print(s.decode('utf-8').strip())	
 
+	# @click.command(context_settings=dict(
+	# 		ignore_unknown_options=True,
+	# ))	
 	@click.command()	
 	@click.option('--reverse', '-r',  is_flag = True, default = False)
-	def ls(reverse):		
+	# @click.argument('opt_args', nargs=-1, type=click.UNPROCESSED)
+	def ls(reverse, opt_args):		
 		"""List existing jobs in the current workspace.
 		By default, the dojo that was created first in the workspace is listed first."""
 
@@ -553,17 +754,17 @@ class JobCLI(click.MultiCommand):
 								env,
 								f"/bin/bash -c '/opt/kaen/job_ls.sh'")
 		
-		# container = client.containers.run(	
-		# 	image=IMAGE, 
-		# 	command=f"/bin/bash -c '/opt/kaen/job_ls.sh'",
-		# 	environment = env,
-		# 	volumes = get_volumes(),
-		# 	auto_remove = False,
-		# 	detach = True )
+		container = client.containers.run(	
+			image=IMAGE, 
+			command=f"/bin/bash -c '/opt/kaen/job_ls.sh'",
+			environment = env,
+			volumes = get_volumes(),
+			auto_remove = False,
+			detach = True )
 
-		# logs = container.attach(stream = True, logs = True)
-		# for s in logs:
-		# 	print(s.decode('utf-8').strip())
+		logs = container.attach(stream = True, logs = True)
+		for s in logs:
+			print(s.decode('utf-8').strip())
 
 	@click.command()
 	@click.argument('job')
@@ -601,14 +802,15 @@ class JobCLI(click.MultiCommand):
 
 
 	def list_commands(self, ctx):
-		return ['ls', 'rm', 'create', 'inspect', 'start']
+		return ['ls', 'rm', 'create', 'inspect', 'start', 'terminate']
 
 	def get_command(self, ctx, name):
 		return {"ls": JobCLI.ls,
 				"rm": JobCLI.rm,
 				'create': JobCLI.create,
 				'inspect': JobCLI.inspect,
-				"start": JobCLI.start}[name]
+				"start": JobCLI.start,
+				"terminate": JobCLI.terminate}[name]
 
 @cli.command("job", cls=JobCLI)
 def job():
